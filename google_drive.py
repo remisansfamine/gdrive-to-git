@@ -66,10 +66,25 @@ class GoogleDrive:
         q = f'"{i}" in parents '
         if ignore_trashed:
             q += 'and trashed = false '
-        l = self.service.files().list(q=q).execute()
+        l = self.service.files().list(q=q, fields='files(id,name,mimeType,createdTime,modifiedTime)').execute()
         
         return l['files']
             
+    def get_shortcut_target(self, shortcut_id):
+        # Récupère les informations sur la cible du shortcut
+        file = self.service.files().get(fileId=shortcut_id, fields="shortcutDetails/targetId", supportsAllDrives=True).execute()
+        target_id = file.get('shortcutDetails', {}).get('targetId', None)
+        if target_id:
+            # Récupère le fichier cible
+            try:
+                target_file = self.service.files().get(fileId=target_id, fields='id,name,mimeType,createdTime,modifiedTime', supportsAllDrives=True).execute()
+                return target_file
+            except HttpError as error:
+                print(f"Erreur lors de la récupération du fichier cible : {error}")
+                return None
+        else:
+            return None
+
     def get_revisions(self, i):
         try:
             r = self.service.revisions().list(fileId=i).execute()
@@ -81,9 +96,9 @@ class GoogleDrive:
         
     def qry_fields(self, i, r=None, fields=['parents']):
         if r is None:
-            p = self.service.files().get(fileId=i, fields=','.join(fields)).execute()
+            p = self.service.files().get(fileId=i, fields=','.join(fields), supportsAllDrives=True).execute()
         else:
-            p = self.service.revisions().get(fileId=i, revisionId=r, fields=','.join(fields)).execute()
+            p = self.service.revisions().get(fileId=i, revisionId=r, fields=','.join(fields), supportsAllDrives=True).execute()
         
         return {f: p[f] for f in fields}
     

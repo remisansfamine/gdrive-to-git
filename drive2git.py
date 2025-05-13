@@ -68,19 +68,25 @@ class Drive2Git:
 
         # scan contents
         contents = []
-        for c in self.drive.folder_contents(folder['id']):
-            if c['mimeType'] == 'application/vnd.google-apps.folder':
-                if not self.check_ignore(c, self.ignore_folders):
-                    p = os.path.join(path, c['name'])
-                    contents.append(self.map_folder(c, path=p))
+        for content in self.drive.folder_contents(folder['id']):
+            originalContent = content
+            if content['mimeType'] == 'application/vnd.google-apps.shortcut':
+                originalContent = self.drive.get_shortcut_target(content['id'])
+
+            if originalContent['mimeType'] == 'application/vnd.google-apps.folder':
+                if not self.check_ignore(originalContent, self.ignore_folders):
+                    p = os.path.join(path, originalContent['name'])
+                    contents.append(self.map_folder(originalContent, path=p))
             else:
                 f = {
-                    'path': os.path.join(path, c['name']),
-                    'id': c['id'],
-                    'name': c['name'],
-                    'type': c['mimeType'],
-                    'gitignore': self.check_ignore(folder, self.ignore_folders) | self.check_ignore(c, self.ignore_files),
-                    'revisions': self.drive.get_revisions(c['id'])
+                    'path': os.path.join(path, originalContent['name']),
+                    'id': originalContent['id'],
+                    'name': originalContent['name'],
+                    'type': originalContent['mimeType'],
+                    'createdTime': originalContent['createdTime'],
+                    'modifiedTime': originalContent['modifiedTime'],
+                    'gitignore': self.check_ignore(folder, self.ignore_folders) | self.check_ignore(originalContent, self.ignore_files),
+                    'revisions': self.drive.get_revisions(originalContent['id'])
                 }
                 contents.append(f)
                 
@@ -122,23 +128,25 @@ class Drive2Git:
         '''
         Recursive.
         '''
-        for c in folder_map['contents']:
-            if c['type'] == 'application/vnd.google-apps.folder':
-                revisions = self.itemize_revisions(c, revisions=revisions)
+        for content in folder_map['contents']:
+            if content['type'] == 'application/vnd.google-apps.folder':
+                revisions = self.itemize_revisions(content, revisions=revisions)
             else:
-                if 'revisions' in c.keys():
-                    if len(c['revisions']) >= 100:
-                        print(f'Warning: maximum number of Google Drive revisions used or exceeded by {c["name"]}.')
-                    for i, r in enumerate(c['revisions']):
+                if 'revisions' in content.keys():
+                    contentRevisions = [None] if content['revisions'] is None else content['revisions'] 
+
+                    if len(contentRevisions) >= 100:
+                        print(f'Warning: maximum number of Google Drive revisions used or exceeded by {content["name"]}.')
+                    for i, r in enumerate(contentRevisions):
                         revision = {
-                            'path': c['path'],
-                            'id': c['id'],
-                            'rid': r['id'],
-                            'name': c['name'],
-                            'gitignore': c['gitignore'],
+                            'path': content['path'],
+                            'id': content['id'],
+                            'rid': None if r is None else r['id'],
+                            'name': content['name'],
+                            'gitignore': content['gitignore'],
                             'version': i + 1
                         }
-                        k = r['modifiedTime']
+                        k = content['modifiedTime'] if r is None else r['modifiedTime']
                         v = revisions.get(k, [])
                         if revision['rid'] not in [i['rid'] for i in v]:  # avoids duplicates if rerun
                             v.append(revision)
@@ -264,14 +272,13 @@ class Drive2Git:
                 print(f'\t{f["path"]}, v{f["version"]}')
                 try:
                     self.drive.stream_file(f['id'], r=f['rid'], out=file_path)
-                except:
-                    print('\t\tFile error!')
-
-                # add file
-                if not f['gitignore']:
-                    repo.index.add([file_path])
-                else:
-                    print(f'\t\tNot added to commit.')
+                    # add file
+                    if not f['gitignore']:
+                        repo.index.add([file_path])
+                    else:
+                        print(f'\t\tNot added to commit.')
+                except Exception as error:
+                    print(f'\t\tFile error :{str(error)}')
                     
             # add gitignore
             self.gitignore()
