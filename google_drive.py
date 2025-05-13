@@ -102,11 +102,27 @@ class GoogleDrive:
         
         return {f: p[f] for f in fields}
     
-    def stream_file(self, i, r=None, out='stream', verbose=False):
-        if r is None:
-            request = self.service.files().get_media(fileId=i)
+    def stream_file(self, f, out='stream', verbose=False):
+        mime = f['type']
+        file_id = f['id']
+        rev_id = f['rid']
+
+        export_map = {
+            'application/vnd.google-apps.document': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',  # .docx
+            'application/vnd.google-apps.spreadsheet': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',     # .xlsx
+            'application/vnd.google-apps.presentation': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',  # .pptx
+        }
+        
+        if rev_id is None:
+            if mime in export_map:
+                request = self.service.files().export(fileId=file_id,mimeType=export_map[mime])
+            else:
+                request = self.service.files().get_media(fileId=file_id)
         else:
-            request = self.service.revisions().get_media(fileId=i, revisionId=r)
+            if mime in export_map:
+                request = self.service.revisions().export(fileId=file_id, revisionId=rev_id, mimeType=export_map[mime])
+            else:
+                request = self.service.revisions().get_media(fileId=file_id, revisionId=rev_id)
         
         if out in ['stream', 'str']:
             stream = io.BytesIO()

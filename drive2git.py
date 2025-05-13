@@ -3,6 +3,7 @@ import os
 import time
 import pytz
 import datetime
+import mimetypes
 
 # GitPython import
 import git
@@ -140,6 +141,7 @@ class Drive2Git:
                     for i, r in enumerate(contentRevisions):
                         revision = {
                             'path': content['path'],
+                            'type': content['type'],
                             'id': content['id'],
                             'rid': None if r is None else r['id'],
                             'name': content['name'],
@@ -226,6 +228,27 @@ class Drive2Git:
 
             v['files'] = list(max_versions.values())
 
+    # Determine output path and extension
+    def ensure_extension(self, path, mime_type):
+        base, ext = os.path.splitext(path)
+        valid_exts = set(mimetypes.types_map.keys())
+        if ext and ext.lower() in valid_exts:
+            return path 
+
+        export_map = {
+            'application/vnd.google-apps.document': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',  # .docx
+            'application/vnd.google-apps.spreadsheet': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',     # .xlsx
+            'application/vnd.google-apps.presentation': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',  # .pptx
+        }
+
+        if mime_type in export_map:
+            mime_type = export_map[mime_type]
+
+        guess = mimetypes.guess_extension(mime_type, strict=False)
+        if guess:
+            return f"{base}{guess}"
+        return path
+
     def gitignore(self):
         file_path = os.path.join(self.local_path, self.name, '.gitignore')
         
@@ -268,10 +291,10 @@ class Drive2Git:
             files = v['files']
             print(f'Auto-commit {i+1}, adding {len(files)} updates bundled from {k}...')
             for f in files:
-                file_path = os.path.join(self.local_path, f['path'])
+                file_path = self.ensure_extension(os.path.join(self.local_path, f['path']), f['type'])
                 print(f'\t{f["path"]}, v{f["version"]}')
                 try:
-                    self.drive.stream_file(f['id'], r=f['rid'], out=file_path)
+                    self.drive.stream_file(f, out=file_path)
                     # add file
                     if not f['gitignore']:
                         repo.index.add([file_path])
