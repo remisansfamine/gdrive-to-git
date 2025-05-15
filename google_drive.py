@@ -115,12 +115,12 @@ class GoogleDrive:
         
         if rev_id is None:
             if mime in export_map:
-                request = self.service.files().export(fileId=file_id,mimeType=export_map[mime])
+                request = self.service.files().export(fileId=file_id, mimeType=export_map[mime])
             else:
                 request = self.service.files().get_media(fileId=file_id)
         else:
             if mime in export_map:
-                request = self.service.revisions().export(fileId=file_id, revisionId=rev_id, mimeType=export_map[mime])
+                request = self.service.revisions().get_media(fileId=file_id)
             else:
                 request = self.service.revisions().get_media(fileId=file_id, revisionId=rev_id)
         
@@ -129,13 +129,22 @@ class GoogleDrive:
         else:
             stream = io.FileIO(out, mode='w')
         downloader = MediaIoBaseDownload(stream, request)
-        done = False
-        while not done:
-            status, done = downloader.next_chunk()
+
+        try:
+            done = False
+            while not done:
+                status, done = downloader.next_chunk()
+                if verbose:
+                    print(f'Download {int(status.progress() * 100)}%')
             if verbose:
-                print(f'Download {int(status.progress() * 100)}%')
-        if verbose:
-            print(f'Size {status.total_size / 1024 / 1024:.2f}MB')
+                print(f'Size {status.total_size / 1024 / 1024:.2f}MB')
+        except Exception as exception:
+            stream.close()
+
+            if os.path.exists(out):
+                os.remove(out)
+
+            print(f"\t\tDownload failed, discarded: {str(exception)}")
 
         if out in ['str']:
             return stream.getvalue()

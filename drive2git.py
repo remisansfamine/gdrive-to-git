@@ -4,6 +4,7 @@ import time
 import pytz
 import datetime
 import mimetypes
+import re
 
 # GitPython import
 import git
@@ -228,12 +229,23 @@ class Drive2Git:
 
             v['files'] = list(max_versions.values())
 
+
+    def sanitize_filename(self, filename):
+        INVALID_CHARS = r'[<>:"/\\|?*]'
+
+        RESERVED = {'CON','PRN','AUX','NUL'} | {f'COM{i}' for i in range(1,10)} | {f'LPT{i}' for i in range(1,10)}
+        
+        if filename.upper() in RESERVED:
+            filename = '_' + filename
+
+        return re.sub(INVALID_CHARS, '_', filename)
+
     # Determine output path and extension
-    def ensure_extension(self, path, mime_type):
-        base, ext = os.path.splitext(path)
+    def ensure_extension(self, filename, mime_type):
+        base, ext = os.path.splitext(filename)
         valid_exts = set(mimetypes.types_map.keys())
         if ext and ext.lower() in valid_exts:
-            return path 
+            return filename 
 
         export_map = {
             'application/vnd.google-apps.document': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',  # .docx
@@ -247,7 +259,13 @@ class Drive2Git:
         guess = mimetypes.guess_extension(mime_type, strict=False)
         if guess:
             return f"{base}{guess}"
-        return path
+        return filename
+
+    def ensure_filepath(self, path, mime_type):
+        dirpath, filename = os.path.split(path)
+        filename = self.sanitize_filename(filename)
+        filename = self.ensure_extension(filename, mime_type)
+        return os.path.join(dirpath, filename)
 
     def gitignore(self):
         file_path = os.path.join(self.local_path, self.name, '.gitignore')
@@ -285,37 +303,42 @@ class Drive2Git:
         self.create_folders(self.folder_map)
 
         # auto-commits
+        first_commit = True
         for i, (k, v) in enumerate(self.bundle.items()):
             # make files
             cdate = v['cdate']
             files = v['files']
             print(f'Auto-commit {i+1}, adding {len(files)} updates bundled from {k}...')
+            pushed_files = []
             for f in files:
-                file_path = self.ensure_extension(os.path.join(self.local_path, f['path']), f['type'])
+                file_path = self.ensure_filepath(os.path.join(self.local_path, f['path']), f['type'])
                 print(f'\t{f["path"]}, v{f["version"]}')
                 try:
                     self.drive.stream_file(f, out=file_path)
                     # add file
                     if not f['gitignore']:
                         repo.index.add([file_path])
+                        pushed_files.append(pushed_files)
                     else:
                         print(f'\t\tNot added to commit.')
-                except Exception as error:
-                    print(f'\t\tFile error :{str(error)}')
+                except Exception as exception:
+                    print(f'\t\tFile {str(f)} - error :{str(exception)}')
                     
-            # add gitignore
-            self.gitignore()
-            gitignore_path = os.path.join(self.local_path, self.name, '.gitignore')
-            repo.index.add([gitignore_path])
-            
-            # add commit comments
-            if i > 0:
-                comments = f'Auto-commit {i+1} (via Google Drive-to-git tool).'
-            else:
-                comments = 'Initial auto-commit (via Google Drive-to-git tool).'
-            
-            repo.index.commit(comments,
-                              author=self.config['author'], committer=self.config['author'],
-                              author_date=cdate, commit_date=cdate)
+            if pushed_files:
+                # add commit comments
+                if not first_commit:
+                    comments = f'Auto-commit {i+1} (via Google Drive-to-git tool).'
+                else:
+                    # add gitignore
+                    self.gitignore()
+                    gitignore_path = os.path.join(self.local_path, self.name, '.gitignore')
+                    pushed_files.append(gitignore_path)
+                    repo.index.add([gitignore_path])
+                    comments = 'Initial auto-commit (via Google Drive-to-git tool).'
+                
+                first_commit = False
+                repo.index.commit(comments,
+                                  author=self.config['author'], committer=self.config['author'],
+                                  author_date=cdate, commit_date=cdate)
             
         print(f'\nNew git folder written!')
