@@ -205,6 +205,8 @@ class Drive2Git:
                             'name': content['name'],
                             'gitignore': content['gitignore'],
                             'version': i + 1,
+                            'authorName': (r or {}).get('lastModifyingUser',{}).get('displayName'),
+                            'authorEmail':  (r or {}).get('lastModifyingUser',{}).get('emailAddress')
                         }
                         k = (r or {}).get('modifiedDate') or content['modifiedTime']
                         v = revisions.get(k, [])
@@ -224,7 +226,7 @@ class Drive2Git:
         tz = self.config['tz']
 
         # initialize variables
-        bundle = {}
+        bundles = {}
         rdates = []
         cdates = []
         comms = []
@@ -246,7 +248,7 @@ class Drive2Git:
                     comms += com  # extend list
                 else:
                     # append previous bundle
-                    bundle.update({rdates[-1]: {
+                    bundles.update({rdates[-1]: {
                         'cdate': cdates[-1],
                         'rdates': rdates,
                         'files': comms
@@ -258,7 +260,7 @@ class Drive2Git:
                     comms = com
                 if len(dates) == 0:
                     # append final bundle
-                    bundle.update({rdates[-1]: {
+                    bundles.update({rdates[-1]: {
                         'cdate': cdates[-1],
                         'rdates': rdates,
                         'files': comms
@@ -269,14 +271,24 @@ class Drive2Git:
                 cdates = [cdate]
                 comms = com
 
-        # sort bundle by keys
-        self.bundle = dict(sorted(bundle.items()))
+        date_sorted_bundles = dict(sorted(bundles.items()))
+
+        self.bundle = []
+        for last_rdate, bundle in date_sorted_bundles.items():
+            cdate   = bundle['cdate']
+            revs    = bundle['files']
+            per_author = {}
+            for rev in revs:
+                name  = rev.get('authorName')  or self.config['author'].name
+                email = rev.get('authorEmail') or self.config['author'].email
+                per_author.setdefault((name, email), []).append(rev)
+            for (name, email), author_revs in per_author.items():
+                self.bundle.append((cdate, name, email, author_revs))
     
     def max_versions(self):
-        for _, v in self.bundle.items():
-            commits = v['files']
+        for i, (cdate, author_name, author_email, changes) in enumerate(self.bundle):
             max_versions = {}
-            for c in commits:
+            for c in changes:
                 i = max_versions.get(c['id'], {})
                 if len(i) == 0:
                     max_versions.update({c['id']: c})
@@ -284,7 +296,7 @@ class Drive2Git:
                     if c['version'] > i['version']:
                         max_versions.update({c['id']: c})
 
-            v['files'] = list(max_versions.values())
+            changes = list(max_versions.values())
 
 
     def sanitize_filename(self, filename):
@@ -354,25 +366,24 @@ class Drive2Git:
 
         # auto-commits
         first_commit = True
-        for i, (k, v) in enumerate(self.bundle.items()):
+        for i, (cdate, author_name, author_email, changes) in enumerate(self.bundle):
+            gitAuthor = git.Actor(name=author_name, email=author_email)
             # make files
-            cdate = v['cdate']
-            files = v['files']
-            print(f'Auto-commit {i+1}, adding {len(files)} updates bundled from {k}...')
+            print(f'Auto-commit {i+1}, adding {len(changes)} bundled changes...')
             pushed_files = []
-            for f in files:
-                file_path = os.path.join(self.local_path, f['path'])
-                print(f'\t{f["path"]}, v{f["version"]}')
+            for change in changes:
+                file_path = os.path.join(self.local_path, change['path'])
+                print(f'\t{change["path"]}, v{change["version"]}')
                 try:
-                    self.drive.stream_file_v2(f, out=file_path)
+                    self.drive.stream_file_v2(change, out=file_path)
                     # add file
-                    if not f['gitignore']:
+                    if not change['gitignore']:
                         repo.index.add([file_path])
                         pushed_files.append(pushed_files)
                     else:
                         print(f'\t\tNot added to commit.')
                 except Exception as exception:
-                    print(f'\t\tFile {str(f)} - error :{str(exception)}')
+                    print(f'\t\tFile {str(change)} - error :{str(exception)}')
                     
             if pushed_files:
                 # add commit comments
@@ -388,7 +399,7 @@ class Drive2Git:
                 
                 first_commit = False
                 repo.index.commit(comments,
-                                  author=self.config['author'], committer=self.config['author'],
+                                  author=gitAuthor, committer=gitAuthor,
                                   author_date=cdate, commit_date=cdate)
             
         print(f'\nNew git folder written!')

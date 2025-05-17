@@ -67,7 +67,7 @@ class GoogleDrive:
         q = f'"{i}" in parents '
         if ignore_trashed:
             q += 'and trashed = false '
-        l = self.service.files().list(q=q, fields='files(id,name,mimeType,createdTime,modifiedTime)').execute()
+        l = self.service.files().list(q=q, fields='files(id,name,mimeType,createdTime,modifiedTime,lastModifyingUser(displayName,emailAddress))').execute()
         
         return l['files']
     
