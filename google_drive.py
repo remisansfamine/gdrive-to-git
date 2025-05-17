@@ -67,17 +67,36 @@ class GoogleDrive:
         q = f'"{i}" in parents '
         if ignore_trashed:
             q += 'and trashed = false '
-        l = self.service.files().list(q=q, fields='files(id,name,mimeType,createdTime,modifiedTime,lastModifyingUser(displayName,emailAddress))').execute()
         
-        return l['files']
+        files = []
+        page_token = None
+
+        fields_str = "nextPageToken, files(id,name,mimeType,createdTime,modifiedTime,lastModifyingUser(displayName,emailAddress))"
+        first_pass = True
+        while first_pass or page_token:
+            first_pass = False
+            resp = self.service.files().list(q=q, fields=fields_str, pageToken=page_token).execute()
+            files.extend(resp.get('files', []))
+            page_token = resp.get('nextPageToken')
+
+        return files
     
     def folder_contents_v2(self, i, ignore_trashed=True):
         q = f'"{i}" in parents '
         if ignore_trashed:
             q += 'and trashed = false '
-        l = self.service.files().list(q=q, projection='FULL').execute()
-        
-        return l['items']
+
+        files  = []
+        page_token = None
+        first_pass = True
+
+        while first_pass or page_token:
+            first_pass = False
+            resp = self.service.files().list(q=q, projection='FULL', pageToken=page_token).execute()
+            files .extend(resp.get('items', []))
+            page_token = resp.get('nextPageToken')
+
+        return files
             
     def get_shortcut_target_v3(self, shortcut_id):
         # Récupère les informations sur la cible du shortcut
@@ -110,22 +129,36 @@ class GoogleDrive:
             return None
 
     def get_revisions_v3(self, i):
-        try:
-            r = self.service.revisions().list(fileId=i).execute()
-        
-            return r['revisions']
-        
-        except:
-            return
+        revisions = []
+        page_token = None
+        first_pass = True
+
+        while first_pass or page_token:
+            first_pass = False
+            try:
+                resp = self.service.revisions().list(fileId=i, pageToken=page_token).execute()
+                revisions.extend(resp.get('revisions', []))
+                page_token = resp.get('nextPageToken')
+            except:
+                continue
+
+        return revisions
         
     def get_revisions_v2(self, i):
-        try:
-            r = self.service.revisions().list(fileId=i).execute()
+        revisions = []
+        page_token = None
+        first_pass = True
 
-            return r['items']
-        
-        except Exception as exception:
-            return
+        while first_pass or page_token:
+            first_pass = False
+            try:
+                resp = self.service.revisions().list(fileId=i, pageToken=page_token).execute()
+                revisions.extend(resp.get('items', []))
+                page_token = resp.get('nextPageToken')
+            except:
+                continue
+
+        return revisions
         
     def qry_fields(self, i, r=None, fields=['parents']):
         if r is None:
