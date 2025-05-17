@@ -18,7 +18,7 @@ class Drive2Git:
         self.config = self.load_config(config)
         self.ignore_folders = ignore_folders
         self.ignore_files = ignore_files
-        self.folder_map = self.map_folder(folder)
+        self.folder_map = self.map_folder_v2(folder)
         self.name = self.folder_map['path']
     
     def check_object(self, obj):
@@ -31,9 +31,9 @@ class Drive2Git:
             
         return obj
     
-    def check_ignore(self, obj, ignorances):
+    def check_ignore(self, obj_title, ignorances):
         flag = False
-        if obj['name'] in ignorances:
+        if obj_title in ignorances:
             flag = True
             
         return flag
@@ -57,7 +57,12 @@ class Drive2Git:
             
         return out
         
-    def map_folder(self, folder, path=''):
+    def ensure_filepath(self, filename, mime_type):
+        filename = self.sanitize_filename(filename)
+        filename = self.ensure_extension(filename, mime_type)
+        return filename
+
+    def map_folder_v3(self, folder, path=''):
         '''
         Recursive.
         '''
@@ -70,25 +75,27 @@ class Drive2Git:
 
         # scan contents
         contents = []
-        for content in self.drive.folder_contents(folder['id']):
+        for content in self.drive.folder_contents_v3(folder['id']):
             originalContent = content
             if content['mimeType'] == 'application/vnd.google-apps.shortcut':
-                originalContent = self.drive.get_shortcut_target(content['id'])
+                originalContent = self.drive.get_shortcut_target_v3(content['id'])
+
+            validContentName = self.ensure_filepath(originalContent['name'], originalContent['mimeType'])
 
             if originalContent['mimeType'] == 'application/vnd.google-apps.folder':
-                if not self.check_ignore(originalContent, self.ignore_folders):
-                    p = os.path.join(path, originalContent['name'])
-                    contents.append(self.map_folder(originalContent, path=p))
+                if not self.check_ignore(validContentName, self.ignore_folders):
+                    p = os.path.join(path, validContentName)
+                    contents.append(self.map_folder_v3(originalContent, path=p))
             else:
                 f = {
-                    'path': os.path.join(path, originalContent['name']),
+                    'path': os.path.join(path, validContentName),
                     'id': originalContent['id'],
-                    'name': originalContent['name'],
+                    'name': validContentName,
                     'type': originalContent['mimeType'],
                     'createdTime': originalContent['createdTime'],
                     'modifiedTime': originalContent['modifiedTime'],
-                    'gitignore': self.check_ignore(folder, self.ignore_folders) | self.check_ignore(originalContent, self.ignore_files),
-                    'revisions': self.drive.get_revisions(originalContent['id'])
+                    'gitignore': self.check_ignore(folder['name'], self.ignore_folders) | self.check_ignore(validContentName, self.ignore_files),
+                    'revisions': self.drive.get_revisions_v3(originalContent['id'])
                 }
                 contents.append(f)
                 
@@ -98,7 +105,57 @@ class Drive2Git:
             'id': folder['id'],
             'name': folder['name'],
             'type': folder['mimeType'],
-            'gitignore': self.check_ignore(folder, self.ignore_folders),
+            'gitignore': self.check_ignore(folder['name'], self.ignore_folders),
+            'contents': contents
+        }
+                
+        return out
+    
+    def map_folder_v2(self, folder, path=''):
+        '''
+        Recursive.
+        '''
+        # check if id used
+        folder = self.check_object(folder)
+        
+        # if root, set path to folder title
+        if path == '':
+            path = folder['title']
+
+        # scan contents
+        contents = []
+        for content in self.drive.folder_contents_v2(folder['id']):
+            originalContent = content
+            if content['mimeType'] == 'application/vnd.google-apps.shortcut':
+                originalContent = self.drive.get_shortcut_target_v2(content['id'])
+
+            validContentName = self.ensure_filepath(originalContent['title'], originalContent['mimeType'])
+
+            if originalContent['mimeType'] == 'application/vnd.google-apps.folder':
+                if not self.check_ignore(validContentName, self.ignore_folders):
+                    p = os.path.join(path, validContentName)
+                    contents.append(self.map_folder_v2(originalContent, path=p))
+            else:
+                f = {
+                    'path': os.path.join(path, validContentName),
+                    'id': originalContent['id'],
+                    'name': validContentName,
+                    'type': originalContent['mimeType'],
+                    'createdTime': originalContent['createdDate'],
+                    'modifiedTime': originalContent['modifiedDate'],
+                    'gitignore': self.check_ignore(folder['title'], self.ignore_folders) | self.check_ignore(validContentName, self.ignore_files),
+                    'revisions': self.drive.get_revisions_v2(originalContent['id']),
+                    'exportLinks': originalContent.get('exportLinks')
+                }
+                contents.append(f)
+                
+        # set up output dictionary
+        out = {
+            'path': path,
+            'id': folder['id'],
+            'name': folder['title'],
+            'type': folder['mimeType'],
+            'gitignore': self.check_ignore(folder['title'], self.ignore_folders),
             'contents': contents
         }
                 
@@ -135,7 +192,7 @@ class Drive2Git:
                 revisions = self.itemize_revisions(content, revisions=revisions)
             else:
                 if 'revisions' in content.keys():
-                    contentRevisions = [None] if content['revisions'] is None else content['revisions'] 
+                    contentRevisions =  content['revisions'] or [None]
 
                     if len(contentRevisions) >= 100:
                         print(f'Warning: maximum number of Google Drive revisions used or exceeded by {content["name"]}.')
@@ -144,12 +201,12 @@ class Drive2Git:
                             'path': content['path'],
                             'type': content['type'],
                             'id': content['id'],
-                            'rid': None if r is None else r['id'],
+                            'rid': (r or {}).get('id'),
                             'name': content['name'],
                             'gitignore': content['gitignore'],
-                            'version': i + 1
+                            'version': i + 1,
                         }
-                        k = content['modifiedTime'] if r is None else r['modifiedTime']
+                        k = (r or {}).get('modifiedDate') or content['modifiedTime']
                         v = revisions.get(k, [])
                         if revision['rid'] not in [i['rid'] for i in v]:  # avoids duplicates if rerun
                             v.append(revision)
@@ -231,13 +288,12 @@ class Drive2Git:
 
 
     def sanitize_filename(self, filename):
-        INVALID_CHARS = r'[<>:"/\\|?*]'
-
         RESERVED = {'CON','PRN','AUX','NUL'} | {f'COM{i}' for i in range(1,10)} | {f'LPT{i}' for i in range(1,10)}
         
         if filename.upper() in RESERVED:
             filename = '_' + filename
 
+        INVALID_CHARS = r'[<>:"/\\|?*]'
         return re.sub(INVALID_CHARS, '_', filename)
 
     # Determine output path and extension
@@ -260,13 +316,7 @@ class Drive2Git:
         if guess:
             return f"{base}{guess}"
         return filename
-
-    def ensure_filepath(self, path, mime_type):
-        dirpath, filename = os.path.split(path)
-        filename = self.sanitize_filename(filename)
-        filename = self.ensure_extension(filename, mime_type)
-        return os.path.join(dirpath, filename)
-
+    
     def gitignore(self):
         file_path = os.path.join(self.local_path, self.name, '.gitignore')
         
@@ -311,10 +361,10 @@ class Drive2Git:
             print(f'Auto-commit {i+1}, adding {len(files)} updates bundled from {k}...')
             pushed_files = []
             for f in files:
-                file_path = self.ensure_filepath(os.path.join(self.local_path, f['path']), f['type'])
+                file_path = os.path.join(self.local_path, f['path'])
                 print(f'\t{f["path"]}, v{f["version"]}')
                 try:
-                    self.drive.stream_file(f, out=file_path)
+                    self.drive.stream_file_v2(f, out=file_path)
                     # add file
                     if not f['gitignore']:
                         repo.index.add([file_path])
