@@ -136,6 +136,10 @@ class Drive2Git:
                     p = os.path.join(path, validContentName)
                     contents.append(self.map_folder_v2(originalContent, path=p))
             else:
+                contentModifyingUserDict = originalContent.get('lastModifyingUser') or {}
+                contentModifyingUserName = contentModifyingUserDict.get('displayName') or originalContent.get('lastModifyingUserName')
+                contentModifyingUserEmail = contentModifyingUserDict.get('emailAddress')
+                
                 f = {
                     'path': os.path.join(path, validContentName),
                     'id': originalContent['id'],
@@ -145,7 +149,9 @@ class Drive2Git:
                     'modifiedTime': originalContent['modifiedDate'],
                     'gitignore': self.check_ignore(folder['title'], self.ignore_folders) | self.check_ignore(validContentName, self.ignore_files),
                     'revisions': self.drive.get_revisions_v2(originalContent['id']),
-                    'exportLinks': originalContent.get('exportLinks')
+                    'exportLinks': originalContent.get('exportLinks'),
+                    'modifyingUserName': contentModifyingUserName,
+                    'modifyingUserEmail': contentModifyingUserEmail
                 }
                 contents.append(f)
                 
@@ -196,19 +202,27 @@ class Drive2Git:
 
                     if len(contentRevisions) >= 100:
                         print(f'Warning: maximum number of Google Drive revisions used or exceeded by {content["name"]}.')
+
+                    contentModifyingUserName = content.get('modifyingUserName')
+                    contentModifyingUserEmail = content.get('modifyingUserEmail')
                     for i, r in enumerate(contentRevisions):
+                        validRevisionDict = r or {}
+                        revisionModifyingUserDict = validRevisionDict.get('lastModifyingUser') or {}
+                        revisionModifyingUserName = revisionModifyingUserDict.get('displayName') or validRevisionDict.get('lastModifyingUserName')
+                        revisionModifyingUserEmail = revisionModifyingUserDict.get('emailAddress')
+
                         revision = {
                             'path': content['path'],
                             'type': content['type'],
                             'id': content['id'],
-                            'rid': (r or {}).get('id'),
+                            'rid': validRevisionDict.get('id'),
                             'name': content['name'],
                             'gitignore': content['gitignore'],
                             'version': i + 1,
-                            'authorName': (r or {}).get('lastModifyingUser',{}).get('displayName'),
-                            'authorEmail':  (r or {}).get('lastModifyingUser',{}).get('emailAddress')
+                            'authorName': revisionModifyingUserName or contentModifyingUserName,
+                            'authorEmail': revisionModifyingUserEmail or contentModifyingUserEmail
                         }
-                        k = (r or {}).get('modifiedDate') or content['modifiedTime']
+                        k = validRevisionDict.get('modifiedDate') or content['modifiedTime']
                         v = revisions.get(k, [])
                         if revision['rid'] not in [i['rid'] for i in v]:  # avoids duplicates if rerun
                             v.append(revision)

@@ -86,7 +86,7 @@ class GoogleDrive:
         if target_id:
             # Récupère le fichier cible
             try:
-                target_file = self.service.files().get(fileId=target_id, fields='id,name,mimeType,createdTime,modifiedTime', supportsAllDrives=True).execute()
+                target_file = self.service.files().get(fileId=target_id, fields='id,name,mimeType,createdTime,modifiedTime,lastModifyingUser(displayName,emailAddress)', supportsAllDrives=True).execute()
                 return target_file
             except HttpError as error:
                 print(f"Erreur lors de la récupération du fichier cible : {error}")
@@ -101,7 +101,7 @@ class GoogleDrive:
         if target_id:
             # Récupère le fichier cible
             try:
-                target_file = self.service.files().get(fileId=target_id, fields='id,title,mimeType,createdDate,modifiedDate', supportsAllDrives=True).execute()
+                target_file = self.service.files().get(fileId=target_id, projection='FULL', supportsAllDrives=True).execute()
                 return target_file
             except HttpError as error:
                 print(f"Erreur lors de la récupération du fichier cible : {error}")
