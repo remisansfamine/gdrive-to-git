@@ -211,6 +211,8 @@ class Drive2Git:
                         revisionModifyingUserName = revisionModifyingUserDict.get('displayName') or validRevisionDict.get('lastModifyingUserName')
                         revisionModifyingUserEmail = revisionModifyingUserDict.get('emailAddress')
 
+                        revisionModifiedTime = validRevisionDict.get('modifiedDate') or validRevisionDict.get('modifiedTime') or content['modifiedTime']
+
                         revision = {
                             'path': content['path'],
                             'type': content['type'],
@@ -220,9 +222,11 @@ class Drive2Git:
                             'gitignore': content['gitignore'],
                             'version': i + 1,
                             'authorName': revisionModifyingUserName or contentModifyingUserName,
-                            'authorEmail': revisionModifyingUserEmail or contentModifyingUserEmail
+                            'authorEmail': revisionModifyingUserEmail or contentModifyingUserEmail,
+                            'createdTime': content['createdTime'],
+                            'modifiedTime': revisionModifiedTime
                         }
-                        k = validRevisionDict.get('modifiedDate') or content['modifiedTime']
+                        k = revisionModifiedTime
                         v = revisions.get(k, [])
                         if revision['rid'] not in [i['rid'] for i in v]:  # avoids duplicates if rerun
                             v.append(revision)
@@ -343,6 +347,44 @@ class Drive2Git:
             return f"{base}{guess}"
         return filename
     
+    def set_creation_time(self, filepath, createdDate):
+        utc = self.config['utc']
+        tz = self.config['tz']
+    
+        # Windows only
+        if os.name == 'nt':
+            import pywintypes, win32file, win32con
+
+            dt = datetime.datetime.strptime(createdDate, "%Y-%m-%dT%H:%M:%S.%fZ")
+            cdate = utc.localize(dt).astimezone(tz)
+            ts = cdate.timestamp()
+
+            h = win32file.CreateFile(
+                filepath,
+                win32con.GENERIC_WRITE,
+                win32file.FILE_SHARE_READ | win32file.FILE_SHARE_WRITE,
+                None,
+                win32con.OPEN_EXISTING,
+                0,
+                None
+            )
+            win32file.SetFileTime(h, pywintypes.Time(ts), None, None)
+            h.Close()
+
+    def set_modification_time(self, filepath, modifiedDate):
+        utc = self.config['utc']
+        tz = self.config['tz']
+    
+        dt = datetime.datetime.strptime(modifiedDate, "%Y-%m-%dT%H:%M:%S.%fZ")
+        mdate = utc.localize(dt).astimezone(tz)
+        ts = mdate.timestamp()
+
+        os.utime(filepath, (ts, ts))
+
+    def apply_drive_timestamps(self, filepath, change):
+        self.set_creation_time(filepath, change['createdTime'])
+        self.set_modification_time(filepath, change['modifiedTime'])
+
     def gitignore(self):
         file_path = os.path.join(self.local_path, self.name, '.gitignore')
         
@@ -392,6 +434,8 @@ class Drive2Git:
                     self.drive.stream_file_v2(change, out=file_path)
                     # add file
                     if not change['gitignore']:
+                        self.apply_drive_timestamps(file_path, change)
+
                         repo.index.add([file_path])
                         pushed_files.append(pushed_files)
                     else:
